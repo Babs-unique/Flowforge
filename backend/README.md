@@ -31,6 +31,37 @@
 $ npm install
 ```
 
+## Database configuration
+
+Set `DATABASE_URL` to a PostgreSQL connection URL before starting the API. The
+application validates environment variables during bootstrap and exits with a
+configuration error before accepting requests if the URL or any provided port
+is invalid. `PORT` defaults to `3000`; `NODE_ENV` defaults to `development`.
+Observe credentials are optional, but must be configured together.
+
+The schema in `prisma/schema.prisma` separates immutable-version references,
+logical task executions, individual attempts, and durable events/outbox rows.
+Its initial migration also adds database checks for self-dependencies and
+monotonic lease fencing. Lease reassignment must rotate `leaseToken` and
+increase `fencingToken` atomically; renewals keep both unchanged.
+
+Generate the Prisma Client and apply the checked-in migration to a development
+database only after confirming `DATABASE_URL` points to the intended database:
+
+```bash
+$ npx prisma generate
+$ npx prisma migrate dev
+```
+
+Do not use `prisma migrate reset` on a database with data. Published workflow
+versions must be treated as immutable by application code, and dependency
+cycle detection belongs in the Graph Module; neither policy is implemented by
+this schema-only change. Write each domain change and its `Outbox` row in one
+database transaction. Outbox delivery is at-least-once, so consumers should
+deduplicate by outbox ID; arbitrary external side effects are not exactly-once.
+`npm run build` generates the Prisma Client automatically. Add models to the
+Prisma schema and generate a new migration before applying schema changes.
+
 ## Compile and run the project
 
 ```bash

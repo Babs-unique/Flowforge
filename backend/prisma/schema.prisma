@@ -1,0 +1,304 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum OrganizationRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum WorkflowVersionStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum DependencyCondition {
+  SUCCESS
+}
+
+enum WorkflowExecutionStatus {
+  PENDING
+  RUNNING
+  PAUSED
+  COMPLETED
+  FAILED
+  CANCELLING
+  CANCELLED
+}
+
+enum TaskExecutionStatus {
+  BLOCKED
+  READY
+  QUEUED
+  RUNNING
+  RETRY_WAIT
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum TaskAttemptStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+  TIMED_OUT
+  CANCELLED
+}
+
+enum WorkerStatus {
+  ONLINE
+  OFFLINE
+}
+
+enum OutboxStatus {
+  PENDING
+  PROCESSING
+  PUBLISHED
+  FAILED
+}
+
+model User {
+  id           String               @id @default(uuid()) @db.Uuid
+  email        String               @unique @db.VarChar(320)
+  passwordHash String?
+  name         String?
+  createdAt    DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime             @updatedAt @db.Timestamptz(6)
+  memberships  OrganizationMember[]
+}
+
+model Organization {
+  id         String               @id @default(uuid()) @db.Uuid
+  name       String               @db.VarChar(255)
+  slug       String               @unique @db.VarChar(100)
+  createdAt  DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime             @updatedAt @db.Timestamptz(6)
+  members    OrganizationMember[]
+  workflows  Workflow[]
+  executions WorkflowExecution[]
+}
+
+model OrganizationMember {
+  id             String           @id @default(uuid()) @db.Uuid
+  userId         String           @db.Uuid
+  organizationId String           @db.Uuid
+  role           OrganizationRole @default(MEMBER)
+  createdAt      DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime         @updatedAt @db.Timestamptz(6)
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@index([userId])
+  @@index([organizationId, role])
+}
+
+model Workflow {
+  id             String            @id @default(uuid()) @db.Uuid
+  organizationId String            @db.Uuid
+  name           String            @db.VarChar(255)
+  description    String?           @db.Text
+  createdAt      DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime          @updatedAt @db.Timestamptz(6)
+  archivedAt     DateTime?         @db.Timestamptz(6)
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  versions       WorkflowVersion[]
+
+  @@unique([id, organizationId])
+  @@index([organizationId, archivedAt])
+}
+
+model WorkflowVersion {
+  id              String                @id @default(uuid()) @db.Uuid
+  workflowId      String                @db.Uuid
+  organizationId  String                @db.Uuid
+  versionNumber   Int
+  status          WorkflowVersionStatus @default(DRAFT)
+  createdAt       DateTime              @default(now()) @db.Timestamptz(6)
+  publishedAt     DateTime?             @db.Timestamptz(6)
+  workflow        Workflow              @relation(fields: [workflowId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  taskDefinitions TaskDefinition[]
+  executions      WorkflowExecution[]
+
+  @@unique([workflowId, versionNumber])
+  @@unique([id, organizationId])
+  @@index([workflowId, status])
+}
+
+model TaskDefinition {
+  id                       String           @id @default(uuid()) @db.Uuid
+  workflowVersionId        String           @db.Uuid
+  taskKey                  String           @db.VarChar(128)
+  name                     String           @db.VarChar(255)
+  description              String?          @db.Text
+  handlerKey               String           @db.VarChar(128)
+  configuration            Json             @db.JsonB
+  timeoutSeconds           Int?
+  maxAttempts              Int              @default(3)
+  retryInitialDelaySeconds Int              @default(5)
+  retryMaxDelaySeconds     Int              @default(300)
+  retryBackoffMultiplier   Float            @default(2.0)
+  createdAt                DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt                DateTime         @updatedAt @db.Timestamptz(6)
+  workflowVersion          WorkflowVersion  @relation(fields: [workflowVersionId], references: [id], onDelete: Restrict)
+  predecessorDependencies  TaskDependency[] @relation("TaskDependencyDependent")
+  dependentDependencies    TaskDependency[] @relation("TaskDependencyPredecessor")
+  executions               TaskExecution[]
+
+  @@unique([workflowVersionId, taskKey])
+  @@unique([id, workflowVersionId])
+  @@index([workflowVersionId])
+}
+
+model TaskDependency {
+  id                String              @id @default(uuid()) @db.Uuid
+  workflowVersionId String              @db.Uuid
+  predecessorTaskId String              @db.Uuid
+  dependentTaskId   String              @db.Uuid
+  condition         DependencyCondition @default(SUCCESS)
+  predecessor       TaskDefinition      @relation("TaskDependencyPredecessor", fields: [predecessorTaskId, workflowVersionId], references: [id, workflowVersionId], onDelete: Restrict)
+  dependent         TaskDefinition      @relation("TaskDependencyDependent", fields: [dependentTaskId, workflowVersionId], references: [id, workflowVersionId], onDelete: Restrict)
+
+  @@unique([predecessorTaskId, dependentTaskId])
+  @@index([workflowVersionId])
+  @@index([dependentTaskId])
+}
+
+model WorkflowExecution {
+  id                String                  @id @default(uuid()) @db.Uuid
+  organizationId    String                  @db.Uuid
+  workflowVersionId String                  @db.Uuid
+  status            WorkflowExecutionStatus @default(PENDING)
+  input             Json?                   @db.JsonB
+  result            Json?                   @db.JsonB
+  error             Json?                   @db.JsonB
+  createdAt         DateTime                @default(now()) @db.Timestamptz(6)
+  startedAt         DateTime?               @db.Timestamptz(6)
+  completedAt       DateTime?               @db.Timestamptz(6)
+  updatedAt         DateTime                @updatedAt @db.Timestamptz(6)
+  organization      Organization            @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  workflowVersion   WorkflowVersion         @relation(fields: [workflowVersionId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  taskExecutions    TaskExecution[]
+  events            WorkflowEvent[]
+
+  @@unique([id, workflowVersionId])
+  @@index([organizationId, status])
+  @@index([workflowVersionId])
+}
+
+model TaskExecution {
+  id                  String              @id @default(uuid()) @db.Uuid
+  workflowExecutionId String              @db.Uuid
+  workflowVersionId   String              @db.Uuid
+  taskDefinitionId    String              @db.Uuid
+  status              TaskExecutionStatus @default(BLOCKED)
+  input               Json?               @db.JsonB
+  result              Json?               @db.JsonB
+  error               Json?               @db.JsonB
+  attemptCount        Int                 @default(0)
+  maxAttempts         Int                 @default(3)
+  nextRetryAt         DateTime?           @db.Timestamptz(6)
+  createdAt           DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt           DateTime            @updatedAt @db.Timestamptz(6)
+  startedAt           DateTime?           @db.Timestamptz(6)
+  completedAt         DateTime?           @db.Timestamptz(6)
+  workflowExecution   WorkflowExecution   @relation(fields: [workflowExecutionId, workflowVersionId], references: [id, workflowVersionId], onDelete: Restrict)
+  taskDefinition      TaskDefinition      @relation(fields: [taskDefinitionId, workflowVersionId], references: [id, workflowVersionId], onDelete: Restrict)
+  attempts            TaskAttempt[]
+  lease               ExecutionLease?
+  events              WorkflowEvent[]
+
+  @@unique([workflowExecutionId, taskDefinitionId])
+  @@unique([id, workflowExecutionId])
+  @@index([workflowExecutionId, status])
+  @@index([status, nextRetryAt])
+}
+
+model TaskAttempt {
+  id              String            @id @default(uuid()) @db.Uuid
+  taskExecutionId String            @db.Uuid
+  attemptNumber   Int
+  status          TaskAttemptStatus @default(RUNNING)
+  workerId        String?           @db.VarChar(128)
+  startedAt       DateTime          @default(now()) @db.Timestamptz(6)
+  completedAt     DateTime?         @db.Timestamptz(6)
+  error           Json?             @db.JsonB
+  result          Json?             @db.JsonB
+  createdAt       DateTime          @default(now()) @db.Timestamptz(6)
+  taskExecution   TaskExecution     @relation(fields: [taskExecutionId], references: [id], onDelete: Restrict)
+  worker          Worker?           @relation(fields: [workerId], references: [workerId], onDelete: Restrict)
+
+  @@unique([taskExecutionId, attemptNumber])
+  @@index([taskExecutionId, status])
+  @@index([workerId])
+}
+
+model Worker {
+  id              String           @id @default(uuid()) @db.Uuid
+  workerId        String           @unique @db.VarChar(128)
+  hostname        String?          @db.VarChar(255)
+  status          WorkerStatus     @default(OFFLINE)
+  lastHeartbeatAt DateTime?        @db.Timestamptz(6)
+  createdAt       DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime         @updatedAt @db.Timestamptz(6)
+  leases          ExecutionLease[]
+  attempts        TaskAttempt[]
+
+  @@index([status, lastHeartbeatAt])
+}
+
+model ExecutionLease {
+  id              String        @id @default(uuid()) @db.Uuid
+  taskExecutionId String        @unique @db.Uuid
+  workerId        String        @db.VarChar(128)
+  leaseToken      String        @unique @default(uuid()) @db.Uuid
+  fencingToken    BigInt        @default(1)
+  acquiredAt      DateTime      @default(now()) @db.Timestamptz(6)
+  expiresAt       DateTime      @db.Timestamptz(6)
+  renewedAt       DateTime?     @db.Timestamptz(6)
+  taskExecution   TaskExecution @relation(fields: [taskExecutionId], references: [id], onDelete: Restrict)
+  worker          Worker        @relation(fields: [workerId], references: [workerId], onDelete: Restrict)
+
+  @@index([expiresAt])
+  @@index([workerId])
+}
+
+model WorkflowEvent {
+  id                  String            @id @default(uuid()) @db.Uuid
+  workflowExecutionId String            @db.Uuid
+  taskExecutionId     String?           @db.Uuid
+  eventType           String            @db.VarChar(128)
+  payload             Json              @db.JsonB
+  occurredAt          DateTime          @default(now()) @db.Timestamptz(6)
+  createdAt           DateTime          @default(now()) @db.Timestamptz(6)
+  workflowExecution   WorkflowExecution @relation(fields: [workflowExecutionId], references: [id], onDelete: Restrict)
+  taskExecution       TaskExecution?    @relation(fields: [taskExecutionId, workflowExecutionId], references: [id, workflowExecutionId], onDelete: Restrict)
+
+  @@index([workflowExecutionId, occurredAt])
+  @@index([taskExecutionId])
+}
+
+model Outbox {
+  id            String       @id @default(uuid()) @db.Uuid
+  eventType     String       @db.VarChar(128)
+  aggregateType String       @db.VarChar(128)
+  aggregateId   String       @db.VarChar(128)
+  payload       Json         @db.JsonB
+  status        OutboxStatus @default(PENDING)
+  attempts      Int          @default(0)
+  nextAttemptAt DateTime?    @db.Timestamptz(6)
+  createdAt     DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime     @updatedAt @db.Timestamptz(6)
+  publishedAt   DateTime?    @db.Timestamptz(6)
+
+  @@index([status, createdAt])
+  @@index([status, nextAttemptAt])
+  @@index([aggregateType, aggregateId])
+}
