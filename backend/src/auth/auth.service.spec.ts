@@ -6,7 +6,6 @@ import argon2 from 'argon2';
 import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuthService } from './auth.service.js';
-import type { AuthenticatedUser } from './types/authenticated-user.js';
 
 const PASSWORD = 'correct horse battery staple 123';
 const ACCESS_SECRET = 'test-access-signing-secret-123456789';
@@ -274,12 +273,8 @@ describe('AuthService', () => {
     const first = await service.register('user@example.com', PASSWORD);
     const second = await service.login('user@example.com', PASSWORD);
     const sessions = [...harness.sessions.values()];
-    const currentUser: AuthenticatedUser = {
-      ...first.user,
-      sessionId: sessions[0].id,
-    };
 
-    await service.logoutCurrentSession(currentUser);
+    await service.logoutCurrentSession(first.tokens.refreshToken);
     expect(sessions[0].revokedAt).toBeInstanceOf(Date);
     expect(sessions[1].revokedAt).toBeNull();
 

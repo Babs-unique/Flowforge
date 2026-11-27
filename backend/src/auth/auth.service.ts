@@ -211,10 +211,16 @@ export class AuthService {
     return { user: result.user, tokens: result.tokens };
   }
 
-  async logoutCurrentSession(user: AuthenticatedUser): Promise<void> {
+  async logoutCurrentSession(refreshToken: string): Promise<void> {
+    const claims = await this.verifyRefreshToken(refreshToken);
     const now = new Date();
     await this.prisma.authSession.updateMany({
-      where: { id: user.sessionId, userId: user.id, revokedAt: null },
+      where: {
+        id: claims.sid,
+        userId: claims.sub,
+        revokedAt: null,
+        expiresAt: { gt: now },
+      },
       data: { revokedAt: now, updatedAt: now },
     });
   }

@@ -114,4 +114,24 @@ describe('authentication cookies', () => {
       ),
     ).resolves.toEqual(user);
   });
+
+  it('logs out with the refresh cookie and clears both cookies', async () => {
+    const logoutCurrentSession = vi.fn().mockResolvedValue(undefined);
+    const auth = {
+      logoutCurrentSession,
+    } as unknown as AuthService;
+    const controller = new AuthController(auth, config);
+    const response = {
+      cookie: vi.fn(),
+      clearCookie: vi.fn(),
+    };
+    const request = {
+      cookies: { [REFRESH_COOKIE_NAME]: tokens.refreshToken },
+    } as unknown as Request;
+
+    await controller.logout(request, response as unknown as Response);
+
+    expect(logoutCurrentSession).toHaveBeenCalledWith(tokens.refreshToken);
+    expect(response.clearCookie).toHaveBeenCalledTimes(2);
+  });
 });

@@ -85,13 +85,18 @@ export class AuthController {
 
   @Post('logout')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @UseGuards(AccessTokenGuard)
   async logout(
-    @CurrentUser() user: AuthenticatedUser,
+    @Req() request: Request,
     @Res({ passthrough: true }) response: Response,
   ): Promise<void> {
-    await this.auth.logoutCurrentSession(user);
-    clearAuthCookies(response, this.config);
+    const token: unknown = request.cookies?.[REFRESH_COOKIE_NAME];
+    try {
+      if (typeof token === 'string') {
+        await this.auth.logoutCurrentSession(token);
+      }
+    } finally {
+      clearAuthCookies(response, this.config);
+    }
   }
 
   @Post('logout-all')
