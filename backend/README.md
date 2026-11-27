@@ -62,6 +62,29 @@ deduplicate by outbox ID; arbitrary external side effects are not exactly-once.
 `npm run build` generates the Prisma Client automatically. Add models to the
 Prisma schema and generate a new migration before applying schema changes.
 
+## Authentication configuration
+
+The browser auth routes require distinct `JWT_ACCESS_SECRET` and
+`JWT_REFRESH_SECRET` values of at least 32 bytes. Generate independent values
+with `openssl rand -base64 48`; never commit them. Set
+`JWT_ACCESS_TOKEN_EXPIRATION=15m` and `JWT_REFRESH_TOKEN_EXPIRATION=7d` to configure
+token lifetimes. Durations use seconds, minutes, hours, or days (`s`, `m`, `h`,
+`d`); defaults are `15m` and `30d`. `COOKIE_DOMAIN` is optional, and
+`COOKIE_SAME_SITE` defaults to `lax`.
+
+Set `CORS_ORIGINS` to a comma-separated list of exact frontend origins (for
+example, `http://localhost:5173`). Wildcards are rejected. Production requires
+HTTPS origins and uses Secure cookies. State-changing requests must include an
+allowed `Origin`; this origin check plus SameSite cookies is the CSRF defense.
+Credentials are never returned in JSON. Refresh-token reuse revokes the
+associated session.
+
+The API also applies a process-local rate limit of 100 requests per client IP
+per minute through Nest's throttler guard. When running behind a reverse proxy,
+configure Express to trust only that proxy so client IP tracking is accurate.
+The default in-memory storage is per application instance; use shared storage
+if limits must be consistent across multiple replicas.
+
 ## Compile and run the project
 
 ```bash
