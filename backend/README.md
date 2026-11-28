@@ -85,6 +85,25 @@ configure Express to trust only that proxy so client IP tracking is accurate.
 The default in-memory storage is per application instance; use shared storage
 if limits must be consistent across multiple replicas.
 
+## Organizations
+
+Organization operations require an authenticated access cookie. Membership is
+resolved from PostgreSQL for every organization-scoped request; JWT claims do
+not grant organization roles.
+
+- `POST /organizations`
+- `GET /organizations`
+- `GET /organizations/:organizationId`
+- `PATCH /organizations/:organizationId`
+- `GET /organizations/:organizationId/members`
+- `PATCH /organizations/:organizationId/members/:memberId/role`
+- `DELETE /organizations/:organizationId/members/:memberId`
+- `DELETE /organizations/:organizationId/members/me`
+
+Organization updates and member management require OWNER or ADMIN access.
+Only an OWNER can assign the OWNER role or perform ownership transfer. The
+system prevents removing or demoting the final OWNER.
+
 ## Compile and run the project
 
 ```bash

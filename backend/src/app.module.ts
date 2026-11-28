@@ -9,6 +9,7 @@ import { AuthModule } from './auth/auth.module.js';
 import { TrustedOriginGuard } from './auth/guards/trusted-origin.guard.js';
 import { validateEnvironment } from './config/env.validation.js';
 import { PrismaModule } from './prisma/prisma.module.js';
+import { OrganizationsModule } from './organizations/organizations.module.js';
 
 export const { ObserveModule, ObserveInstrument } = createObserveModule();
 
@@ -38,6 +39,7 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
     }),
     PrismaModule,
     AuthModule,
+    OrganizationsModule,
   ],
   controllers: [AppController],
   providers: [
