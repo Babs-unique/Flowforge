@@ -20,7 +20,7 @@ export class OrganizationsService {
 
   async create(userId: string, dto: CreateOrganizationDto) {
     const slug = dto.slug ?? slugify(dto.name);
-    if (!slug) {
+    if (!isValidOrganizationSlug(slug)) {
       throw new BadRequestException(
         'Organization name must produce a valid slug',
       );
@@ -112,6 +112,9 @@ export class OrganizationsService {
       OrganizationRole.OWNER,
       OrganizationRole.ADMIN,
     ]);
+    if (dto.slug !== undefined && !isValidOrganizationSlug(dto.slug)) {
+      throw new BadRequestException('Invalid organization slug');
+    }
 
     try {
       return await this.prisma.organization.update({
@@ -161,7 +164,7 @@ export class OrganizationsService {
     userId: string,
     role: OrganizationRole,
   ) {
-    return this.prisma.$transaction(async (transaction) => {
+    return this.runSerializable(async (transaction) => {
       const actor = await this.requireMembership(
         organizationId,
         userId,
@@ -232,7 +235,7 @@ export class OrganizationsService {
   }
 
   async removeMember(organizationId: string, memberId: string, userId: string) {
-    return this.prisma.$transaction(async (transaction) => {
+    return this.runSerializable(async (transaction) => {
       const actor = await this.requireMembership(
         organizationId,
         userId,
@@ -282,7 +285,7 @@ export class OrganizationsService {
   }
 
   async leave(organizationId: string, userId: string) {
-    return this.prisma.$transaction(async (transaction) => {
+    return this.runSerializable(async (transaction) => {
       const membership = await this.requireMembership(
         organizationId,
         userId,
@@ -324,6 +327,32 @@ export class OrganizationsService {
     return membership;
   }
 
+  private async runSerializable<T>(
+    operation: (transaction: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        return await this.prisma.$transaction(operation, {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+          maxWait: 5_000,
+          timeout: 10_000,
+        });
+      } catch (error) {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2034' &&
+          attempt < 2
+        ) {
+          continue;
+        }
+        throw error;
+      }
+    }
+    throw new ConflictException(
+      'The organization changed concurrently. Please retry.',
+    );
+  }
+
   private async requireRoles(
     organizationId: string,
     userId: string,
@@ -345,5 +374,14 @@ function slugify(value: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
-    .slice(0, 100);
+    .slice(0, 100)
+    .replace(/-+$/g, '');
+}
+
+function isValidOrganizationSlug(value: string): boolean {
+  return (
+    value.length >= 2 &&
+    value.length <= 100 &&
+    /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value)
+  );
 }

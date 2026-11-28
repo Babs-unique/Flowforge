@@ -39,6 +39,7 @@ function createPrismaMock() {
       delete: vi.fn(),
     },
   };
+  let transactionQueue = Promise.resolve();
 
   const prisma = {
     organization: {
@@ -51,8 +52,11 @@ function createPrismaMock() {
       findMany: vi.fn(),
     },
     $transaction: vi.fn(
-      async <T>(callback: (client: typeof transaction) => Promise<T>) =>
-        callback(transaction),
+      async <T>(callback: (client: typeof transaction) => Promise<T>) => {
+        const result = transactionQueue.then(() => callback(transaction));
+        transactionQueue = result.catch(() => undefined);
+        return result;
+      },
     ),
   };
 
@@ -264,5 +268,92 @@ describe('OrganizationsService', () => {
     expect(transaction.organizationMember.delete).toHaveBeenCalledWith({
       where: { id: 'target-membership' },
     });
+  });
+
+  it('removes trailing separators after truncating a generated slug', async () => {
+    const { prisma, transaction } = createPrismaMock();
+    transaction.organization.create.mockResolvedValue({
+      id: 'org-id',
+      name: 'A'.repeat(255),
+      slug: 'a'.repeat(100),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    const service = new OrganizationsService(
+      prisma as unknown as PrismaService,
+    );
+
+    await service.create('user-id', {
+      name: `${'a'.repeat(99)}---`,
+    });
+
+    expect(transaction.organization.create).toHaveBeenCalledWith({
+      data: {
+        name: `${'a'.repeat(99)}---`,
+        slug: 'a'.repeat(99),
+      },
+    });
+  });
+
+  it('allows only one of two concurrent owner departures', async () => {
+    const { prisma, transaction } = createPrismaMock();
+    let ownerCount = 2;
+    const owners = new Map([
+      [
+        'owner-1',
+        createMembership(
+          'org-id',
+          'owner-1',
+          OrganizationRole.OWNER,
+          'membership-1',
+        ),
+      ],
+      [
+        'owner-2',
+        createMembership(
+          'org-id',
+          'owner-2',
+          OrganizationRole.OWNER,
+          'membership-2',
+        ),
+      ],
+    ]);
+
+    transaction.organizationMember.findUnique.mockImplementation(
+      async ({
+        where,
+      }: {
+        where: { userId_organizationId: { userId: string } };
+      }) => owners.get(where.userId_organizationId.userId) ?? null,
+    );
+    transaction.organizationMember.count.mockImplementation(
+      async () => ownerCount,
+    );
+    transaction.organizationMember.delete.mockImplementation(
+      async ({ where }: { where: { id: string } }) => {
+        const owner = [...owners.values()].find(
+          (membership) => membership.id === where.id,
+        );
+        if (owner) {
+          owners.delete(owner.userId);
+          ownerCount -= 1;
+        }
+      },
+    );
+    const service = new OrganizationsService(
+      prisma as unknown as PrismaService,
+    );
+
+    const results = await Promise.allSettled([
+      service.leave('org-id', 'owner-1'),
+      service.leave('org-id', 'owner-2'),
+    ]);
+
+    expect(
+      results.filter((result) => result.status === 'fulfilled'),
+    ).toHaveLength(1);
+    expect(
+      results.filter((result) => result.status === 'rejected'),
+    ).toHaveLength(1);
   });
 });
